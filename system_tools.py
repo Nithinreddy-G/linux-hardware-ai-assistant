@@ -1,59 +1,89 @@
-"""Safe, read-only Linux hardware inspection tools."""
+"""
+Linux Hardware Assistant - System Tools
 
-from __future__ import annotations
+Features:
+- CPU information
+- RAM and swap information
+- Storage devices
+- Disk usage
+- Network interfaces
+- GPU detection
+- RAM slot information (when available)
+- Top running processes
+- Linux system information
+
+Security:
+- Uses fixed, read-only commands.
+- Does not use shell=True.
+- Does not execute arbitrary user commands.
+"""
 
 import json
 import os
 import re
 import shutil
 import subprocess
-
 from pathlib import Path
-from typing import Any
 
 
 TIMEOUT_SECONDS = 8
 
-# Fixed commands only. No user input is passed to the shell.
+
+# --------------------------------------------------
+# 1. FIXED COMMAND ALLOW-LIST
+# --------------------------------------------------
+
 COMMANDS = {
     "cpu": ("lscpu", ["--json"]),
+
     "memory": ("free", ["--bytes"]),
+
     "block": (
         "lsblk",
         [
-            "--json", "--bytes",
+            "--json",
+            "--bytes",
             "-o",
             "NAME,SIZE,TYPE,MOUNTPOINT,MODEL,ROTA,TRAN,FSTYPE"
         ]
     ),
+
     "pci": ("lspci", ["-nn"]),
+
     "disk": ("df", ["-B1", "-T", "/"]),
+
     "network": ("ip", ["-j", "address", "show"]),
-    "system": ("uname", ["-a"]),
+
+    "system": ("uname", ["-a"])
 }
 
 
-def _run_fixed(key: str) -> dict[str, Any]:
+# --------------------------------------------------
+# 2. SAFE COMMAND EXECUTION
+# --------------------------------------------------
 
-    if key not in COMMANDS:
+def run_fixed_command(command_name):
+
+    if command_name not in COMMANDS:
         return {
             "ok": False,
-            "error": "Tool is not allow-listed."
+            "error": "Command is not allow-listed."
         }
 
-    binary, args = COMMANDS[key]
+    binary, arguments = COMMANDS[command_name]
 
-    path = shutil.which(binary)
+    executable = shutil.which(binary)
 
-    if not path:
+    if not executable:
         return {
             "ok": False,
-            "error": f"Required utility '{binary}' is not installed."
+            "error": f"{binary} is not installed."
         }
 
     try:
+
         result = subprocess.run(
-            [path, *args],
+            [executable] + arguments,
             capture_output=True,
             text=True,
             timeout=TIMEOUT_SECONDS,
@@ -62,10 +92,13 @@ def _run_fixed(key: str) -> dict[str, Any]:
         )
 
         if result.returncode != 0:
+
             return {
                 "ok": False,
-                "error": result.stderr.strip()
-                or f"{binary} exited with {result.returncode}."
+                "error": (
+                    result.stderr.strip()
+                    or f"{binary} returned error code {result.returncode}"
+                )
             }
 
         return {
@@ -74,84 +107,103 @@ def _run_fixed(key: str) -> dict[str, Any]:
         }
 
     except subprocess.TimeoutExpired:
+
         return {
             "ok": False,
-            "error": f"{binary} timed out."
+            "error": f"{binary} command timed out."
         }
 
-    except OSError as exc:
+    except OSError as error:
+
         return {
             "ok": False,
-            "error": str(exc)
+            "error": str(error)
         }
 
 
 # --------------------------------------------------
-# CPU INFORMATION
+# 3. CPU INFORMATION
 # --------------------------------------------------
 
-def _parse_cpu() -> dict:
+def get_cpu_info():
 
-    result = _run_fixed("cpu")
+    result = run_fixed_command("cpu")
 
     if not result["ok"]:
         return result
 
     try:
-        entries = json.loads(
-            result["stdout"]
-        ).get("lscpu", [])
 
-        raw = {
-            str(item.get("field", "")).rstrip(":"):
-            item.get("data")
-            for item in entries
-        }
+        output = json.loads(result["stdout"])
+
+        entries = output.get("lscpu", [])
+
+        cpu_data = {}
+
+        for item in entries:
+
+            field = str(item.get("field", "")).rstrip(":")
+
+            cpu_data[field] = item.get("data")
 
         return {
             "ok": True,
+
             "data": {
-                "model": raw.get("Model name"),
-                "architecture": raw.get("Architecture"),
-                "physical_cores": raw.get("Core(s) per socket"),
-                "logical_cpus": raw.get("CPU(s)"),
-                "sockets": raw.get("Socket(s)"),
-                "threads_per_core": raw.get("Thread(s) per core"),
-                "vendor": raw.get("Vendor ID"),
-                "max_mhz": raw.get("CPU max MHz"),
-                "min_mhz": raw.get("CPU min MHz"),
-                "virtualization": raw.get("Virtualization"),
-                "raw_fields": raw
+                "model": cpu_data.get("Model name"),
+
+                "architecture": cpu_data.get("Architecture"),
+
+                "vendor": cpu_data.get("Vendor ID"),
+
+                "sockets": cpu_data.get("Socket(s)"),
+
+                "physical_cores_per_socket":
+                    cpu_data.get("Core(s) per socket"),
+
+                "threads_per_core":
+                    cpu_data.get("Thread(s) per core"),
+
+                "logical_cpus":
+                    cpu_data.get("CPU(s)"),
+
+                "maximum_frequency":
+                    cpu_data.get("CPU max MHz"),
+
+                "minimum_frequency":
+                    cpu_data.get("CPU min MHz"),
+
+                "virtualization":
+                    cpu_data.get("Virtualization")
             }
         }
 
-    except (ValueError, TypeError, AttributeError) as exc:
+    except Exception as error:
+
         return {
             "ok": False,
-            "error": f"Could not parse CPU information: {exc}"
+            "error": f"CPU parsing failed: {error}"
         }
 
 
 # --------------------------------------------------
-# RAM AND SWAP INFORMATION
+# 4. RAM AND SWAP INFORMATION
 # --------------------------------------------------
 
-def _parse_memory() -> dict:
+def get_memory_summary():
 
-    result = _run_fixed("memory")
+    result = run_fixed_command("memory")
 
     if not result["ok"]:
         return result
 
     try:
+
         lines = result["stdout"].splitlines()
 
         memory_data = {}
 
-        def to_gib(value):
-
-            if value is None:
-                return None
+        def convert_to_gib(value):
 
             return round(value / (1024 ** 3), 2)
 
@@ -170,73 +222,76 @@ def _parse_memory() -> dict:
             values = [
                 int(value)
                 for value in parts[1:]
+                if value.isdigit()
             ]
 
-            total = values[0] if len(values) > 0 else None
-            used = values[1] if len(values) > 1 else None
-            free = values[2] if len(values) > 2 else None
+            if len(values) < 3:
+                continue
 
-            available = (
-                values[5]
-                if label == "mem" and len(values) > 5
-                else None
-            )
-
-            memory_data[label] = {
-                "total_bytes": total,
-                "used_bytes": used,
-                "free_bytes": free,
-                "available_bytes": available,
-
-                "total_gib": to_gib(total),
-                "used_gib": to_gib(used),
-                "free_gib": to_gib(free),
-                "available_gib": to_gib(available)
+            row = {
+                "total_bytes": values[0],
+                "used_bytes": values[1],
+                "free_bytes": values[2]
             }
+
+            row["total_gib"] = convert_to_gib(values[0])
+
+            row["used_gib"] = convert_to_gib(values[1])
+
+            row["free_gib"] = convert_to_gib(values[2])
+
+            if label == "mem" and len(values) >= 6:
+
+                row["available_bytes"] = values[5]
+
+                row["available_gib"] = convert_to_gib(
+                    values[5]
+                )
+
+            memory_data[label] = row
 
         return {
             "ok": True,
             "data": memory_data,
-            "format_note": (
-                "RAM and swap values are calculated in GiB "
-                "using 1024^3 bytes. "
-                "Use mem.available_gib for available RAM. "
-                "Use swap.total_gib, swap.used_gib and "
-                "swap.free_gib for swap."
+            "note": (
+                "Memory values are provided in bytes and GiB. "
+                "Available RAM is different from free RAM."
             )
         }
 
-    except (ValueError, IndexError, TypeError) as exc:
+    except Exception as error:
 
         return {
             "ok": False,
-            "error": f"Could not parse memory information: {exc}"
+            "error": f"Memory parsing failed: {error}"
         }
 
 
 # --------------------------------------------------
-# STORAGE DEVICES
+# 5. STORAGE DEVICE INFORMATION
 # --------------------------------------------------
 
-def _parse_block() -> dict:
+def get_block_devices():
 
-    result = _run_fixed("block")
+    result = run_fixed_command("block")
 
     if not result["ok"]:
         return result
 
     try:
-        devices = json.loads(
-            result["stdout"]
-        ).get("blockdevices", [])
 
-        def normalize(items):
+        output = json.loads(result["stdout"])
 
-            output = []
+        devices = output.get("blockdevices", [])
 
-            for device in items:
+        def parse_devices(device_list):
+
+            parsed = []
+
+            for device in device_list:
 
                 name = device.get("name")
+
                 transport = device.get("tran")
 
                 is_nvme = (
@@ -244,138 +299,168 @@ def _parse_block() -> dict:
                     or str(transport).lower() == "nvme"
                 )
 
-                output.append({
+                parsed.append({
+
                     "name": name,
-                    "size_bytes": device.get("size"),
-                    "type": device.get("type"),
+
                     "model": device.get("model"),
+
+                    "size_bytes": device.get("size"),
+
+                    "type": device.get("type"),
+
                     "transport": transport,
+
                     "is_rotational": device.get("rota"),
+
                     "is_nvme": is_nvme,
+
                     "filesystem": device.get("fstype"),
+
                     "mountpoint": device.get("mountpoint"),
-                    "children": normalize(
+
+                    "children": parse_devices(
                         device.get("children") or []
                     )
+
                 })
 
-            return output
+            return parsed
 
         return {
             "ok": True,
             "data": {
-                "devices": normalize(devices)
+                "devices": parse_devices(devices)
             }
         }
 
-    except (ValueError, TypeError, AttributeError) as exc:
+    except Exception as error:
 
         return {
             "ok": False,
-            "error": f"Could not parse storage information: {exc}"
+            "error": f"Storage parsing failed: {error}"
         }
 
 
 # --------------------------------------------------
-# DISK USAGE
+# 6. DISK USAGE
 # --------------------------------------------------
 
-def _parse_disk() -> dict:
+def get_disk_usage():
 
-    result = _run_fixed("disk")
-
-    if not result["ok"]:
-        return result
-
-    lines = result["stdout"].splitlines()
-
-    if len(lines) < 2:
-        return {
-            "ok": False,
-            "error": "Unexpected disk output."
-        }
-
-    parts = lines[1].split()
-
-    try:
-        return {
-            "ok": True,
-            "data": {
-                "filesystem": parts[0],
-                "type": parts[1],
-                "total_bytes": int(parts[2]),
-                "used_bytes": int(parts[3]),
-                "available_bytes": int(parts[4]),
-                "used_percent": parts[5],
-                "mountpoint": parts[6]
-            }
-        }
-
-    except (ValueError, IndexError):
-
-        return {
-            "ok": True,
-            "data": {
-                "raw": lines[1]
-            }
-        }
-
-
-# --------------------------------------------------
-# NETWORK INFORMATION
-# --------------------------------------------------
-
-def _parse_network() -> dict:
-
-    result = _run_fixed("network")
+    result = run_fixed_command("disk")
 
     if not result["ok"]:
         return result
 
     try:
-        rows = json.loads(result["stdout"])
 
-        interfaces = []
+        lines = result["stdout"].splitlines()
 
-        for row in rows:
+        if len(lines) < 2:
 
-            interfaces.append({
-                "interface": row.get("ifname"),
-                "state": row.get("operstate"),
+            return {
+                "ok": False,
+                "error": "Unexpected disk usage output."
+            }
 
-                "addresses": [
-                    {
-                        "family": address.get("family"),
-                        "address": address.get("local"),
-                        "prefixlen": address.get("prefixlen")
-                    }
+        values = lines[1].split()
 
-                    for address in row.get("addr_info", [])
-                ]
+        return {
+            "ok": True,
+
+            "data": {
+
+                "filesystem": values[0],
+
+                "filesystem_type": values[1],
+
+                "total_bytes": int(values[2]),
+
+                "used_bytes": int(values[3]),
+
+                "available_bytes": int(values[4]),
+
+                "used_percentage": values[5],
+
+                "mountpoint": values[6]
+
+            }
+        }
+
+    except Exception as error:
+
+        return {
+            "ok": False,
+            "error": f"Disk parsing failed: {error}"
+        }
+
+
+# --------------------------------------------------
+# 7. NETWORK INFORMATION
+# --------------------------------------------------
+
+def get_network_info():
+
+    result = run_fixed_command("network")
+
+    if not result["ok"]:
+        return result
+
+    try:
+
+        interfaces = json.loads(result["stdout"])
+
+        parsed = []
+
+        for interface in interfaces:
+
+            addresses = []
+
+            for address in interface.get("addr_info", []):
+
+                addresses.append({
+
+                    "family": address.get("family"),
+
+                    "address": address.get("local"),
+
+                    "prefix_length": address.get("prefixlen")
+
+                })
+
+            parsed.append({
+
+                "interface": interface.get("ifname"),
+
+                "state": interface.get("operstate"),
+
+                "addresses": addresses
+
             })
 
         return {
             "ok": True,
             "data": {
-                "interfaces": interfaces
+                "interfaces": parsed
             }
         }
 
-    except (ValueError, TypeError) as exc:
+    except Exception as error:
 
         return {
             "ok": False,
-            "error": f"Could not parse network information: {exc}"
+            "error": f"Network parsing failed: {error}"
         }
 
 
 # --------------------------------------------------
-# GPU AND PCI INFORMATION
+# 8. PCI DEVICES
 # --------------------------------------------------
 
-def _parse_pci() -> dict:
+def get_pci_devices():
 
-    result = _run_fixed("pci")
+    result = run_fixed_command("pci")
 
     if not result["ok"]:
         return result
@@ -383,55 +468,86 @@ def _parse_pci() -> dict:
     devices = result["stdout"].splitlines()
 
     return {
+
         "ok": True,
+
         "data": {
+
             "devices": devices,
 
             "display_controllers": [
-                item for item in devices
+                device
+                for device in devices
                 if re.search(
                     r"VGA|3D controller|Display controller",
-                    item,
-                    re.I
+                    device,
+                    re.IGNORECASE
                 )
             ],
 
             "network_controllers": [
-                item for item in devices
+                device
+                for device in devices
                 if re.search(
                     r"Ethernet controller|Network controller",
-                    item,
-                    re.I
+                    device,
+                    re.IGNORECASE
                 )
             ]
+
         }
     }
 
 
 # --------------------------------------------------
-# RAM SLOT INFORMATION
+# 9. GPU INFORMATION
 # --------------------------------------------------
 
-def _memory_topology() -> dict:
+def get_gpu_info():
+
+    result = get_pci_devices()
+
+    if not result["ok"]:
+        return result
+
+    return {
+
+        "ok": True,
+
+        "data": result["data"]["display_controllers"],
+
+        "note": (
+            "These are PCI display-controller devices. "
+            "Detailed GPU utilization and VRAM information "
+            "may require vendor-specific utilities."
+        )
+    }
+
+
+# --------------------------------------------------
+# 10. RAM SLOT AND MEMORY TOPOLOGY
+# --------------------------------------------------
+
+def get_memory_topology():
 
     executable = shutil.which("dmidecode")
 
-    raw = None
     warning = None
 
-    if executable:
+    if not executable:
 
-        command = [
-            executable,
-            "--type",
-            "memory"
-        ]
+        warning = "dmidecode is not installed."
+
+    else:
+
+        command = [executable, "--type", "memory"]
 
         if os.geteuid() != 0:
 
             sudo = shutil.which("sudo")
 
             if sudo:
+
                 command = [
                     sudo,
                     "-n",
@@ -439,10 +555,13 @@ def _memory_topology() -> dict:
                     "--type",
                     "memory"
                 ]
+
             else:
+
                 warning = "sudo is unavailable."
 
         try:
+
             result = subprocess.run(
                 command,
                 capture_output=True,
@@ -453,87 +572,116 @@ def _memory_topology() -> dict:
             )
 
             if result.returncode == 0:
+
                 raw = result.stdout
-            else:
-                warning = (
-                    result.stderr.strip()
-                    or "DMI information unavailable."
+
+                sizes = re.findall(
+                    r"^\s*Size:\s*(.+?)\s*$",
+                    raw,
+                    re.MULTILINE | re.IGNORECASE
                 )
 
-        except (OSError, subprocess.TimeoutExpired) as exc:
-            warning = str(exc)
+                installed = [
+                    size
+                    for size in sizes
+                    if not re.search(
+                        r"No Module Installed|Unknown|Not Specified",
+                        size,
+                        re.IGNORECASE
+                    )
+                ]
 
-    else:
-        warning = "dmidecode is not installed."
+                capacities = re.findall(
+                    r"^\s*Maximum Capacity:\s*(.+?)\s*$",
+                    raw,
+                    re.MULTILINE | re.IGNORECASE
+                )
 
-    if raw:
+                speeds = re.findall(
+                    r"^\s*Speed:\s*(.+?)\s*$",
+                    raw,
+                    re.MULTILINE | re.IGNORECASE
+                )
 
-        sizes = re.findall(
-            r"^\s*Size:\s*(.+?)\s*$",
-            raw,
-            re.M | re.I
-        )
+                types = re.findall(
+                    r"^\s*Type:\s*(.+?)\s*$",
+                    raw,
+                    re.MULTILINE | re.IGNORECASE
+                )
 
-        installed = [
-            size for size in sizes
-            if not re.search(
-                r"No Module Installed|Unknown|Not Specified",
-                size,
-                re.I
+                return {
+
+                    "ok": True,
+
+                    "data": {
+
+                        "source": "dmidecode",
+
+                        "slot_count": (
+                            len(sizes) if sizes else None
+                        ),
+
+                        "used_slots": (
+                            len(installed) if sizes else None
+                        ),
+
+                        "free_slots": (
+                            len(sizes) - len(installed)
+                            if sizes else None
+                        ),
+
+                        "installed_modules": installed,
+
+                        "maximum_capacity": (
+                            capacities[0]
+                            if capacities else None
+                        ),
+
+                        "module_speeds": speeds,
+
+                        "module_types": types,
+
+                        "maximum_capacity_verified": bool(
+                            capacities
+                        )
+
+                    },
+
+                    "warning": warning
+
+                }
+
+            warning = (
+                result.stderr.strip()
+                or "dmidecode failed or permission was denied."
             )
-        ]
 
-        maximum = re.findall(
-            r"^\s*Maximum Capacity:\s*(.+?)\s*$",
-            raw,
-            re.M | re.I
-        )
+        except Exception as error:
 
-        speeds = re.findall(
-            r"^\s*Speed:\s*(.+?)\s*$",
-            raw,
-            re.M | re.I
-        )
+            warning = str(error)
 
-        return {
-            "ok": True,
-            "data": {
-                "source": "dmidecode",
-                "slot_count": len(sizes) if sizes else None,
-                "used_slots": len(installed) if sizes else None,
-                "free_slots": (
-                    len(sizes) - len(installed)
-                    if sizes else None
-                ),
-                "installed_module_sizes": installed,
-                "maximum_capacity": (
-                    maximum[0] if maximum else None
-                ),
-                "module_speeds": speeds,
-                "maximum_capacity_verified": bool(maximum)
-            },
-            "warning": warning
-        }
+    # Fallback when DMI data is unavailable.
 
-    # Safe fallback: never guess motherboard capacity or slot count.
-
-    total = None
+    total_memory = None
 
     try:
+
         for line in Path("/proc/meminfo").read_text().splitlines():
 
             if line.startswith("MemTotal:"):
-                total = int(line.split()[1]) * 1024
+
+                total_memory = int(line.split()[1]) * 1024
+
                 break
 
     except OSError:
         pass
 
-    board = {}
+    board_information = {}
 
     dmi_path = Path("/sys/class/dmi/id")
 
-    for key in (
+    for field in (
         "board_vendor",
         "board_name",
         "sys_vendor",
@@ -542,66 +690,92 @@ def _memory_topology() -> dict:
     ):
 
         try:
-            value = (dmi_path / key).read_text().strip()
+
+            value = (dmi_path / field).read_text().strip()
 
             if value:
-                board[key] = value
+
+                board_information[field] = value
 
         except OSError:
             pass
 
     return {
+
         "ok": True,
+
         "data": {
+
             "source": "Linux fallback",
-            "installed_total_bytes": total,
+
+            "installed_total_bytes": total_memory,
+
             "slot_count": None,
+
             "used_slots": None,
+
             "free_slots": None,
+
             "maximum_capacity": None,
+
             "maximum_capacity_verified": False,
-            "board": board,
+
+            "board_information": board_information,
+
             "note": (
-                "Linux does not expose reliable RAM slot count "
-                "or motherboard maximum capacity in this environment."
+                "RAM slot count and maximum motherboard "
+                "capacity are unavailable from the current "
+                "Linux environment."
             )
+
         },
+
         "warning": warning
+
     }
 
 
 # --------------------------------------------------
-# TOP MEMORY-USING PROCESSES
+# 11. TOP PROCESSES
 # --------------------------------------------------
 
-def get_top_processes(limit=10) -> dict:
+def get_top_processes(limit=10):
 
     try:
+
         import psutil
 
-        rows = []
+        processes = []
 
-        for process in psutil.process_iter([
-            "pid",
-            "name",
-            "memory_percent",
-            "cpu_percent"
-        ]):
+        for process in psutil.process_iter(
+            [
+                "pid",
+                "name",
+                "memory_percent",
+                "cpu_percent"
+            ]
+        ):
 
             try:
+
                 info = process.info
 
-                rows.append({
+                processes.append({
+
                     "pid": info.get("pid"),
+
                     "name": info.get("name"),
+
                     "ram_percent": round(
                         float(info.get("memory_percent") or 0),
                         2
                     ),
+
                     "cpu_percent": round(
                         float(info.get("cpu_percent") or 0),
-                        1
+                        2
                     )
+
                 })
 
             except (
@@ -609,133 +783,237 @@ def get_top_processes(limit=10) -> dict:
                 psutil.AccessDenied,
                 psutil.ZombieProcess
             ):
+
                 continue
 
-        rows.sort(
+        processes.sort(
             key=lambda item: item["ram_percent"],
             reverse=True
         )
 
         return {
+
             "ok": True,
-            "data": rows[:max(1, min(int(limit), 20))]
+
+            "data": processes[:max(1, min(int(limit), 20))]
+
         }
 
-    except Exception as exc:
+    except Exception as error:
 
         return {
             "ok": False,
-            "error": str(exc)
+            "error": str(error)
         }
 
 
 # --------------------------------------------------
-# MAIN TOOL DISPATCHER
+# 12. SYSTEM INFORMATION
 # --------------------------------------------------
 
-def execute_system_tool(
-    tool_name: str,
-    arguments: dict | None = None
-) -> dict:
+def get_system_info():
 
-    """Execute only approved read-only hardware inspection tools."""
+    result = run_fixed_command("system")
 
-    arguments = arguments or {}
+    if not result["ok"]:
+        return result
 
-    if not isinstance(arguments, dict) or arguments:
-        return {
-            "ok": False,
-            "error": "This inspection tool accepts no arguments."
+    return {
+
+        "ok": True,
+
+        "data": {
+            "uname": result["stdout"]
         }
 
-    dispatch = {
-        "get_cpu_info": _parse_cpu,
-        "get_memory_summary": _parse_memory,
-        "get_block_devices": _parse_block,
-        "get_disk_usage": _parse_disk,
-        "get_network_info": _parse_network,
-        "get_pci_devices": _parse_pci,
-        "get_memory_topology": _memory_topology,
-        "get_top_processes": get_top_processes
     }
 
-    if tool_name == "get_system_info":
 
-        result = _run_fixed("system")
+# --------------------------------------------------
+# 13. TOOL DISPATCHER
+# --------------------------------------------------
 
-        if not result["ok"]:
-            return result
+ALLOWED_TOOL_NAMES = [
 
-        return {
-            "ok": True,
-            "data": {
-                "uname": result["stdout"]
-            }
-        }
+    "get_cpu_info",
 
-    if tool_name == "get_gpu_info":
+    "get_memory_summary",
 
-        result = _parse_pci()
+    "get_block_devices",
 
-        if not result["ok"]:
-            return result
+    "get_disk_usage",
 
-        return {
-            "ok": True,
-            "data": result["data"]["display_controllers"],
-            "note": (
-                "PCI display-controller inventory. "
-                "Detailed GPU utilization and VRAM require "
-                "specific vendor utilities and are not inferred."
-            )
-        }
+    "get_network_info",
+
+    "get_pci_devices",
+
+    "get_gpu_info",
+
+    "get_memory_topology",
+
+    "get_top_processes",
+
+    "get_system_info"
+
+]
+
+
+def execute_system_tool(tool_name, arguments=None):
+
+    """
+    Executes only approved inspection functions.
+
+    Model-generated arguments are not used to construct
+    shell commands. Each tool uses fixed command parameters.
+    """
+
+    dispatch = {
+
+        "get_cpu_info": get_cpu_info,
+
+        "get_memory_summary": get_memory_summary,
+
+        "get_block_devices": get_block_devices,
+
+        "get_disk_usage": get_disk_usage,
+
+        "get_network_info": get_network_info,
+
+        "get_pci_devices": get_pci_devices,
+
+        "get_gpu_info": get_gpu_info,
+
+        "get_memory_topology": get_memory_topology,
+
+        "get_top_processes": get_top_processes,
+
+        "get_system_info": get_system_info
+
+    }
 
     function = dispatch.get(tool_name)
 
     if function is None:
+
         return {
+
             "ok": False,
+
             "error": "Unauthorized tool name."
+
         }
+
+    # Tool calls do not accept arbitrary command arguments.
+    # The optional arguments parameter is intentionally ignored.
+
+    if tool_name == "get_top_processes":
+
+        return function()
 
     return function()
 
 
 # --------------------------------------------------
-# ALLOWED TOOL NAMES
+# 14. AVAILABLE SYSTEM CAPABILITIES
 # --------------------------------------------------
 
-ALLOWED_TOOL_NAMES = (
-    "get_cpu_info",
-    "get_memory_summary",
-    "get_block_devices",
-    "get_disk_usage",
-    "get_network_info",
-    "get_pci_devices",
-    "get_gpu_info",
-    "get_memory_topology",
-    "get_top_processes",
-    "get_system_info"
-)
+def discover_capabilities():
 
+    capabilities = {
 
-# --------------------------------------------------
-# DETECT AVAILABLE LINUX UTILITIES
-# --------------------------------------------------
+        "cpu": bool(shutil.which("lscpu")),
 
-def discover_capabilities() -> dict:
+        "memory": bool(shutil.which("free")),
 
-    found = {
-        name: bool(shutil.which(binary))
-        for name, (binary, args) in COMMANDS.items()
+        "block": bool(shutil.which("lsblk")),
+
+        "pci": bool(shutil.which("lspci")),
+
+        "disk": bool(shutil.which("df")),
+
+        "network": bool(shutil.which("ip")),
+
+        "system": bool(shutil.which("uname")),
+
+        "dmidecode": bool(shutil.which("dmidecode")),
+
+        "sudo": bool(shutil.which("sudo")),
+
+        "psutil": False
+
     }
 
-    found["dmidecode"] = bool(
-        shutil.which("dmidecode")
+    try:
+
+        import psutil
+
+        capabilities["psutil"] = True
+
+    except ImportError:
+
+        pass
+
+    return capabilities
+
+
+# --------------------------------------------------
+# 15. DIRECT TEST
+# --------------------------------------------------
+
+if __name__ == "__main__":
+
+    print("\nLINUX HARDWARE ASSISTANT - SYSTEM TEST")
+
+    print("\nAvailable capabilities:")
+
+    print(
+        json.dumps(
+            discover_capabilities(),
+            indent=4
+        )
     )
 
-    found["sudo"] = bool(
-        shutil.which("sudo")
+    print("\nCPU information:")
+
+    print(
+        json.dumps(
+            get_cpu_info(),
+            indent=4
+        )
     )
 
-    return found
+    print("\nMemory information:")
+
+    print(
+        json.dumps(
+            get_memory_summary(),
+            indent=4
+        )
+    )
+
+    print("\nStorage information:")
+
+    print(
+        json.dumps(
+            get_block_devices(),
+            indent=4
+        )
+    )
+
+    print("\nGPU information:")
+
+    print(
+        json.dumps(
+            get_gpu_info(),
+            indent=4
+        )
+    )
+
+    print("\nMemory topology:")
+
+    print(
+        json.dumps(
+            get_memory_topology(),
+            indent=4
+        )
+    )
