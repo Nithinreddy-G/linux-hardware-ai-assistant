@@ -469,12 +469,11 @@ except Exception:
 # ---------------------------------------------------------
 st.title("💻 Linux Hardware AI Assistant")
 
-# Identify whether the app is running locally or on Streamlit Cloud.
-IS_CLOUD = bool(
-    os.getenv("STREAMLIT_SHARING_MODE")
-    or os.getenv("STREAMLIT_RUNTIME_ENV") == "cloud"
-    or os.getenv("STREAMLIT_SERVER_HEADLESS") == "true"
-)
+# Identify whether the app is running on Streamlit Cloud.
+try:
+    IS_CLOUD = bool(st.secrets.get("GROQ_API_KEY", ""))
+except Exception:
+    IS_CLOUD = False
 
 if IS_CLOUD:
     st.warning(
