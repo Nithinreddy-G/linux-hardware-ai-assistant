@@ -40,21 +40,144 @@ def safe_number(value, default=0.0):
         return default
 
 
-def generate_ai_response(question, hardware_data=None, processes=None):
-    """Route dashboard questions through the local Ollama tool-calling agent."""
+def generate_ai_response(question, hardware_data, processes=None):
+    """
+    Use Groq in the public cloud deployment.
+    Use local Ollama when no Groq API key is configured.
+    """
+    process_list = processes or []
+
+    prompt = f"""
+You are a careful Linux Hardware Assistant.
+
+Answer the user's question using ONLY the system snapshot
+and process list below.
+
+Never invent hardware specifications, process names, or values.
+If requested information is absent, say it is unavailable.
+Keep labels and units exact. Use simple English.
+
+Important:
+- CPU usage is already a percentage.
+- RAM available and disk free space are different metrics.
+- Do not confuse GB of RAM with GB of disk.
+- The deployed application may inspect a cloud Linux environment,
+  not the user's personal laptop.
+- Never claim cloud hardware information belongs to the user's laptop.
+- Compare numeric RAM percentages when identifying top processes.
+- If information is missing, clearly say it is unavailable.
+
+SYSTEM SNAPSHOT:
+{json.dumps(hardware_data, indent=2, default=str)}
+
+TOP RUNNING PROCESSES:
+{json.dumps(process_list, indent=2, default=str)}
+
+USER QUESTION:
+{question}
+
+Give a direct, concise answer.
+"""
+
+    # Check whether a Groq API key is configured in Streamlit Secrets.
     try:
-        return ask_hardware_assistant(question, st.session_state.assistant_messages)
-    except requests.exceptions.ConnectionError:
-        return "Cannot connect to Ollama at http://localhost:11434. Start Ollama and check that qwen2.5:1.5b is installed."
+        groq_api_key = st.secrets.get("GROQ_API_KEY", "")
+    except Exception:
+        groq_api_key = ""
+
+    try:
+        if groq_api_key:
+            # Public cloud deployment: use Groq.
+            response = requests.post(
+                "https://api.groq.com/openai/v1/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {groq_api_key}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": "llama-3.3-70b-versatile",
+                    "messages": [
+                        {
+                            "role": "system",
+                            "content": (
+                                "You are a careful Linux hardware "
+                                "assistant. Never invent system information."
+                            ),
+                        },
+                        {
+                            "role": "user",
+                            "content": prompt,
+                        },
+                    ],
+                    "temperature": 0,
+                    "max_completion_tokens": 400,
+                    "stream": False,
+                },
+                timeout=60,
+            )
+
+            response.raise_for_status()
+            payload = response.json()
+
+            answer = (
+                payload.get("choices", [{}])[0]
+                .get("message", {})
+                .get("content", "")
+                .strip()
+            )
+
+            if not answer:
+                return "Groq returned an empty answer. Please try again."
+
+            return answer
+
+        else:
+            # Local development: continue using Ollama.
+            response = requests.post(
+                OLLAMA_URL,
+                json={
+                    "model": MODEL,
+                    "prompt": prompt,
+                    "stream": False,
+                    "options": {
+                        "temperature": 0,
+                        "num_predict": 400,
+                    },
+                },
+                timeout=REQUEST_TIMEOUT,
+            )
+
+            response.raise_for_status()
+            payload = response.json()
+            answer = payload.get("response", "").strip()
+
+            return answer or "Ollama returned an empty answer."
+
     except requests.exceptions.Timeout:
-        return "The local AI request timed out. Please try again."
+        return "The AI request timed out. Please try again."
+
     except requests.exceptions.HTTPError as error:
-        detail = getattr(error.response, "text", "")[:1000]
-        return f"Ollama HTTP error: {error}\n{detail}"
-    except requests.RequestException as error:
-        return f"Ollama request error: {error}"
+        status = response.status_code
+
+        if status == 401:
+            return "Groq authentication failed. Please check the API key in Streamlit Secrets."
+
+        if status == 429:
+            return "Groq API rate limit reached. Please wait and try again."
+
+        return f"AI service returned HTTP error {status}: {error}"
+
+    except requests.exceptions.ConnectionError:
+        return (
+            "Cannot connect to the AI service. "
+            "Please check your internet connection or Ollama service."
+        )
+
+    except (requests.RequestException, ValueError, KeyError, IndexError) as error:
+        return f"AI request error: {error}"
+
     except Exception as error:
-        return f"Assistant error: {error}"
+        return f"Unexpected AI error: {error}"
 
 # ---------------------------------------------------------
 # Hardware Health
