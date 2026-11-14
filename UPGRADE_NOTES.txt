@@ -1,0 +1,20 @@
+UPGRADE NOTES
+=============
+Modified:
+- dashboard.py
+- hardware_extended.py
+
+Added:
+- requirements.txt
+- README.md
+- UPGRADE_NOTES.txt
+
+Preserved without modification from your uploaded project:
+- assistant.py
+- assistant_backup.py
+- hardware.py
+- hardware.py.save
+- hardware_extended.p
+- system_tools.py
+
+The existing module layout and Ollama model name are retained.
