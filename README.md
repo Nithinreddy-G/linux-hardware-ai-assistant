@@ -41,7 +41,7 @@ The application consists of the following modules:
 | `requirements.txt` | Python dependencies |
 | `tests/` | Automated unit tests |
 
-### Tool-calling workflow
+### 4. Tool-calling workflow
 
 1. User submits a hardware-related question.
 2. The question is sent to the local Ollama model.
@@ -52,19 +52,32 @@ The application consists of the following modules:
 7. The LLM generates a natural-language response.
 8. Conversation history is retained for follow-up questions.
 
-## 4. Installation Requirements
+4. Installation Requirements
 
-- Python 3.10 or later.
-- Ubuntu or another compatible Linux environment.
-- Ollama.
-- Qwen 2.5 1.5B model.
-- Required Python packages.
+Requirements:
 
-Install the dependencies:
+Python 3.10 or later.
 
-```bash
+Ubuntu or another compatible Linux environment.
+
+Ollama.
+
+Qwen 2.5 1.5B model.
+
+Clone the repository:
+
+git clone https://github.com/Nithinreddy-G/linux-hardware-ai-assistant.git
+cd linux-hardware-ai-assistant
+
+Create and activate a virtual environment:
+
+python3 -m venv venv
+source venv/bin/activate
+
+Install dependencies:
+
+python -m pip install --upgrade pip
 pip install -r requirements.txt
-```
 
 ## 5. Ollama Setup
 
@@ -92,35 +105,21 @@ Do not start a second Ollama server if one is already running.
 
 ## 6. Running the Application
 
-Navigate to the project directory:
+Make sure Ollama is running and the model is available:
 
-```bash
-cd linux-hardware-assistant
-```
+ollama list
 
-Activate the virtual environment:
+If Ollama is not running:
 
-```bash
-source venv/bin/activate
-```
+ollama serve
 
-Install dependencies:
+Start the Streamlit dashboard:
 
-```bash
-pip install -r requirements.txt
-```
+python -m streamlit run dashboard.py --server.port 8502
 
-Start the dashboard:
+Open the application in your browser:
 
-```bash
-python -m streamlit run dashboard.py --server.port 8503
-```
-
-Open the application:
-
-```text
-http://localhost:8503
-```
+http://localhost:8502
 
 ## 7. Example Questions
 
@@ -195,3 +194,15 @@ Hardware inspection is performed through local Linux utilities. No external LLM 
 Linux Hardware AI Assistant combines local LLM inference, Python tool execution and Linux system inspection to provide an interactive hardware question-answering experience.
 
 The project demonstrates LLM integration, native tool calling, structured system information parsing, conversation context management and basic command-execution security.
+## 13. Application Screenshots
+
+### System Monitoring Dashboard
+
+![Linux Hardware AI Assistant Dashboard](screenshots/dashboard.png)
+
+### Hardware Question Answering
+
+![Hardware Q&A Example](screenshots/hardware_qa.png)
+### Additional Hardware Q&A Example
+
+![Second Hardware Q&A Example](screenshots/hardware_qa2.png)
