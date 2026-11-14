@@ -853,10 +853,16 @@ st.divider()
 
 st.header("🤖 AI Hardware Assistant")
 
-st.caption(
-    "Ask questions about your computer. The local Qwen model can select safe, read-only Linux inspection tools."
-)
-
+if IS_CLOUD:
+    st.caption(
+        "Ask questions about the cloud server's hardware. "
+        "Powered by Groq Cloud AI."
+    )
+else:
+    st.caption(
+        "Ask questions about your computer. "
+        "Local Qwen AI can assist with Linux hardware analysis."
+    )
 
 # Display previous chat messages
 for chat_message in st.session_state.chat_history:
@@ -916,13 +922,17 @@ if st.button("🗑️ Clear Chat"):
 # ---------------------------------------------------------
 st.divider()
 
-st.caption(
-    "Linux Hardware AI Assistant | Python · Streamlit · Ollama"
-)
-
-st.caption(f"Local AI Model: {MODEL}")
-
-st.caption(
-    "WSL2 note: Linux metrics may reflect the WSL virtual machine, "
-    "not the entire Windows host."
-)
+if IS_CLOUD:
+    st.caption(
+        "Linux Hardware AI Assistant | Python · Streamlit · Groq"
+    )
+    st.caption("AI Backend: Groq Cloud API")
+else:
+    st.caption(
+        "Linux Hardware AI Assistant | Python · Streamlit · Ollama"
+    )
+    st.caption(f"Local AI Model: {MODEL}")
+    st.caption(
+        "WSL2 note: Linux metrics may reflect the WSL virtual machine, "
+        "not the entire Windows host."
+    )
