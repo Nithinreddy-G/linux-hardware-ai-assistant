@@ -1,3 +1,4 @@
+import os
 import io
 import json
 from datetime import datetime
@@ -468,9 +469,25 @@ except Exception:
 # ---------------------------------------------------------
 st.title("💻 Linux Hardware AI Assistant")
 
-st.caption(
-    "Real-time Linux system monitoring and local AI hardware analysis."
+# Identify whether the app is running locally or on Streamlit Cloud.
+IS_CLOUD = bool(
+    os.getenv("STREAMLIT_SHARING_MODE")
+    or os.getenv("STREAMLIT_RUNTIME_ENV") == "cloud"
+    or os.getenv("STREAMLIT_SERVER_HEADLESS") == "true"
 )
+
+if IS_CLOUD:
+    st.warning(
+        "☁️ CLOUD DEPLOYMENT MODE: The hardware information below "
+        "belongs to the Streamlit cloud server, not the visitor's laptop."
+    )
+    st.caption("AI Backend: Groq Cloud API")
+else:
+    st.success(
+        "💻 LOCAL MODE: Hardware information is collected from "
+        "your current Linux environment."
+    )
+    st.caption("AI Backend: Local Ollama (Qwen 2.5 1.5B)")
 
 st.caption(
     "Last sampled: "
