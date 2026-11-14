@@ -8,3 +8,9 @@ __pycache__/
 .env.*
 .pytest_cache/
 .streamlit/secrets.toml
+
+# Additional backup and local files
+*_backup*.py
+installed_packages.txt
+.venv/
+*.log

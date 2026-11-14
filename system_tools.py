@@ -62,7 +62,7 @@ COMMANDS = {
 # 2. SAFE COMMAND EXECUTION
 # --------------------------------------------------
 
-def run_fixed_command(command_name):
+def _run_fixed(command_name):
 
     if command_name not in COMMANDS:
         return {
@@ -119,6 +119,11 @@ def run_fixed_command(command_name):
             "ok": False,
             "error": str(error)
         }
+
+
+def run_fixed_command(command_name):
+    """Backward-compatible name for the allow-listed command runner."""
+    return _run_fixed(command_name)
 
 
 # --------------------------------------------------
@@ -265,6 +270,16 @@ def get_memory_summary():
             "ok": False,
             "error": f"Memory parsing failed: {error}"
         }
+
+
+def _parse_cpu():
+    """Compatibility parser used by the unit tests."""
+    return get_cpu_info()
+
+
+def _parse_memory():
+    """Compatibility parser used by the unit tests."""
+    return get_memory_summary()
 
 
 # --------------------------------------------------
@@ -866,6 +881,13 @@ def execute_system_tool(tool_name, arguments=None):
     Model-generated arguments are not used to construct
     shell commands. Each tool uses fixed command parameters.
     """
+
+    # All inspection tools are zero-argument tools. Reject unexpected input.
+    if arguments is not None and arguments != {}:
+        return {
+            "ok": False,
+            "error": "Unexpected arguments are not allowed."
+        }
 
     dispatch = {
 
